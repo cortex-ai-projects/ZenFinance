@@ -16,22 +16,48 @@ from zenfinance.models import TransactionDTO
 from zenfinance.parsers.registry import ACCEPTED_EXTENSIONS, get_parser
 
 # ── Source catalogue with display metadata ─────────────────────────────
+# (key, display_name, emoji, colour, formats, description, group)
+# group: "bank" | "audit" | "intermediator" | "terminal" | "other"
 SOURCE_CARDS = [
-    # (key,              display_name,      emoji, colour,  formats,          description)
-    ("SBI Bank",        "SBI Bank",         "🏦",  "#4CC9F0", [".xlsx"],        "State Bank of India XLSX statement"),
-    ("ICICI Bank",      "ICICI Bank",       "🏦",  "#56CCF2", [".xlsx",".xls"], "ICICI Bank XLS / XLSX statement"),
-    ("HDFC Bank",       "HDFC Bank",        "🏦",  "#6C63FF", [".xlsx",".csv"], "HDFC Bank Excel / CSV export"),
-    ("Axis Bank",       "Axis Bank",        "🏦",  "#BB86FC", [".xlsx",".csv"], "Axis Bank Excel / CSV export"),
-    ("Kotak Bank",      "Kotak Bank",       "🏦",  "#9B59B6", [".xlsx",".csv"], "Kotak Bank Excel / CSV export"),
-    ("PhonePe",         "PhonePe",          "📱",  "#7C3AED", [".pdf"],          "PhonePe PDF statement export"),
-    ("Google Pay",      "Google Pay",       "📱",  "#43D9AD", [".csv"],          "Google Pay CSV transaction history"),
-    ("Paytm",           "Paytm",            "📱",  "#4361EE", [".csv",".xlsx"],  "Paytm transaction CSV / Excel"),
-    ("Amazon Pay",      "Amazon Pay",       "🛒",  "#FFB347", [".csv"],          "Amazon Pay order history CSV"),
-    ("Swiggy Money",    "Swiggy",           "🍔",  "#FF6584", [".csv"],          "Swiggy / Swiggy Money CSV"),
-    ("Other / Generic", "Other / Generic",  "📄",  "#8888AA", [".csv",".xlsx",".xls"], "Any bank / app CSV or Excel"),
+    # ── Audit ground-truth ─────────────────────────────────────────────
+    ("AXIO",            "AXIO",             "🔍",  "#43D9AD", [".csv", ".xlsx"],           "Your personal ledger — marks transactions Audited",       "audit"),
+
+    # ── Banks ──────────────────────────────────────────────────────────
+    ("SBI Bank",        "SBI Bank",         "🏦",  "#4CC9F0", [".xlsx", ".xls", ".pdf"],   "State Bank of India — Excel or PDF statement",            "bank"),
+    ("ICICI Bank",      "ICICI Bank",       "🏦",  "#56CCF2", [".xlsx", ".xls", ".pdf"],   "ICICI Bank — Excel (XLS/XLSX) or PDF statement",          "bank"),
+    ("HDFC Bank",       "HDFC Bank",        "🏦",  "#6C63FF", [".xlsx", ".csv"],            "HDFC Bank Excel / CSV export",                            "bank"),
+    ("Axis Bank",       "Axis Bank",        "🏦",  "#BB86FC", [".xlsx", ".csv"],            "Axis Bank Excel / CSV export",                            "bank"),
+    ("Kotak Bank",      "Kotak Bank",       "🏦",  "#9B59B6", [".xlsx", ".csv"],            "Kotak Bank Excel / CSV export",                           "bank"),
+
+    # ── Payment intermediators ──────────────────────────────────────────
+    ("PhonePe",         "PhonePe",          "📱",  "#7C3AED", [".pdf"],                     "PhonePe PDF — enriches bank records (intermediator)",     "intermediator"),
+    ("Google Pay",      "Google Pay",       "📱",  "#43D9AD", [".csv"],                     "Google Pay CSV — enriches bank records (intermediator)",  "intermediator"),
+    ("Paytm",           "Paytm",            "📱",  "#4361EE", [".csv", ".xlsx"],            "Paytm — payment intermediator",                           "intermediator"),
+    ("Amazon Pay",      "Amazon Pay",       "🛒",  "#FFB347", [".csv"],                     "Amazon Pay — payment intermediator",                      "intermediator"),
+
+    # ── Terminal / merchant apps ────────────────────────────────────────
+    ("Swiggy",          "Swiggy",           "🍔",  "#FC8019", [".csv", ".xlsx"],            "Swiggy orders — confirms food delivery spend",            "terminal"),
+    ("Zomato",          "Zomato",           "🍕",  "#E23744", [".csv", ".xlsx"],            "Zomato orders — confirms food delivery spend",            "terminal"),
+    ("Blinkit",         "Blinkit",          "⚡",  "#F8CB2E", [".csv", ".xlsx"],            "Blinkit (quick commerce) orders",                         "terminal"),
+    ("Zepto",           "Zepto",            "🛵",  "#8B5CF6", [".csv", ".xlsx"],            "Zepto quick-delivery orders",                             "terminal"),
+    ("BigBasket",       "BigBasket",        "🛒",  "#84CC16", [".csv", ".xlsx"],            "BigBasket grocery orders",                                "terminal"),
+    ("Amazon",          "Amazon",           "📦",  "#FF9900", [".csv", ".xlsx"],            "Amazon order history",                                    "terminal"),
+    ("Swiggy Money",    "Swiggy Money",     "💰",  "#FF6584", [".csv"],                     "Swiggy Money wallet transactions",                        "terminal"),
+
+    # ── Catch-all ──────────────────────────────────────────────────────
+    ("Other / Generic", "Other / Generic",  "📄",  "#8888AA", [".csv", ".xlsx", ".xls"],   "Any bank / app CSV or Excel (auto-detect columns)",       "other"),
 ]
 
 SOURCE_MAP = {s[0]: s for s in SOURCE_CARDS}
+
+# Group labels for the upload UI
+_GROUP_LABELS = {
+    "audit":        ("🔍 Audit / Ground Truth", "#43D9AD"),
+    "bank":         ("🏦 Banks",                "#4CC9F0"),
+    "intermediator":("💳 Payment Intermediators (route money, enrich records)", "#7C3AED"),
+    "terminal":     ("🏪 Terminal / Merchant Apps (confirm spend)", "#FC8019"),
+    "other":        ("📄 Other / Generic",       "#8888AA"),
+}
 
 GREEN  = "#43D9AD"
 RED    = "#FF6584"
@@ -41,53 +67,85 @@ CARD   = "#1A1D2E"
 
 
 def _source_grid() -> str | None:
-    """Render a card-grid of source options; return the selected source key."""
+    """
+    Render a grouped card-grid of source options; return the selected source key.
+
+    Groups:  Audit → Banks → Intermediators → Terminal Apps → Other
+    Each group shows a header so users know the role of each source.
+    """
     if "selected_source" not in st.session_state:
         st.session_state.selected_source = None
 
     st.markdown("### 1 · Select Your Source")
-    st.caption("Click the bank or app your statement comes from.")
+    st.caption(
+        "Click the bank or app your statement comes from. "
+        "Sources are grouped by their role in the audit pipeline."
+    )
 
-    # Render cards in rows of 4
+    # Organise cards by group
+    from collections import OrderedDict
+    groups: dict[str, list] = OrderedDict()
+    for card in SOURCE_CARDS:
+        g = card[6] if len(card) > 6 else "other"
+        groups.setdefault(g, []).append(card)
+
     row_size = 4
-    for row_start in range(0, len(SOURCE_CARDS), row_size):
-        row_items = SOURCE_CARDS[row_start : row_start + row_size]
-        cols = st.columns(row_size)
-        for col, (key, name, emoji, colour, fmts, desc) in zip(cols, row_items):
-            is_selected = st.session_state.selected_source == key
-            border = f"2px solid {colour}" if is_selected else f"1px solid #2A2D3E"
-            bg     = f"{colour}18"         if is_selected else "#1A1D2E"
-            shadow = f"0 0 12px {colour}55" if is_selected else "none"
+    for group_key, cards in groups.items():
+        label, colour = _GROUP_LABELS.get(group_key, (group_key.title(), "#8888AA"))
+        st.markdown(
+            f'<div style="font-size:0.8rem;font-weight:700;color:{colour};'
+            f'letter-spacing:.06em;margin:14px 0 6px 2px;text-transform:uppercase">'
+            f'{label}</div>',
+            unsafe_allow_html=True,
+        )
 
-            col.markdown(
-                f"""
-                <div style="
-                    background:{bg};
-                    border:{border};
-                    border-radius:14px;
-                    padding:14px 10px 12px;
-                    text-align:center;
-                    box-shadow:{shadow};
-                    margin-bottom:6px;
-                    cursor:pointer;
-                    transition:all .2s;
-                ">
-                  <div style="font-size:1.7rem">{emoji}</div>
-                  <div style="font-weight:700;font-size:0.85rem;color:#FAFAFA;margin-top:4px">{name}</div>
-                  <div style="font-size:0.65rem;color:#8888AA;margin-top:2px">{', '.join(fmts)}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            # Invisible button overlaid on the card
-            if col.button(
-                f"Select {name}",
-                key=f"src_btn_{key}",
-                help=desc,
-                use_container_width=True,
-            ):
-                st.session_state.selected_source = key
-                st.rerun()
+        for row_start in range(0, len(cards), row_size):
+            row_items = cards[row_start : row_start + row_size]
+            # Pad to row_size so columns are always equal width
+            cols = st.columns(row_size)
+            for col_idx, col in enumerate(cols):
+                if col_idx >= len(row_items):
+                    break
+                card = row_items[col_idx]
+                key, name, emoji, card_colour, fmts = card[0], card[1], card[2], card[3], card[4]
+                desc = card[5] if len(card) > 5 else name
+
+                is_selected = st.session_state.selected_source == key
+                border = f"2px solid {card_colour}" if is_selected else "1px solid #2A2D3E"
+                bg     = f"{card_colour}22"          if is_selected else "#1A1D2E"
+                shadow = f"0 0 12px {card_colour}55" if is_selected else "none"
+
+                col.markdown(
+                    f"""
+                    <div style="
+                        background:{bg};
+                        border:{border};
+                        border-radius:14px;
+                        padding:14px 10px 12px;
+                        text-align:center;
+                        box-shadow:{shadow};
+                        margin-bottom:6px;
+                        cursor:pointer;
+                        transition:all .2s;
+                    ">
+                      <div style="font-size:1.7rem">{emoji}</div>
+                      <div style="font-weight:700;font-size:0.82rem;color:#FAFAFA;margin-top:4px">{name}</div>
+                      <div style="font-size:0.62rem;color:#8888AA;margin-top:2px">{', '.join(fmts)}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                # NOTE: do NOT call st.rerun() here — the button press already
+                # triggers a Streamlit rerun automatically. A second explicit rerun
+                # collapses the sidebar permanently. Session-state update is enough.
+                if col.button(
+                    f"Select {name}",
+                    key=f"src_btn_{key}",
+                    help=desc,
+                    use_container_width=True,
+                ):
+                    st.session_state.selected_source = key
+                    # No st.rerun() — Streamlit reruns automatically on button click
 
     return st.session_state.selected_source
 
@@ -133,10 +191,9 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Reset button
+    # Reset button — no st.rerun() needed; button click triggers automatic rerun
     if st.button("✕ Change source", key="reset_source"):
         st.session_state.selected_source = None
-        st.rerun()
 
     # ── Step 2: File uploader ─────────────────────────────────────────────
     st.markdown("---")
@@ -179,7 +236,9 @@ def render():
 
         with st.spinner(f"Parsing `{uf.name}`…"):
             try:
-                parser   = get_parser(source)
+                # Pass filename so registry can dispatch to the correct format parser
+                # (e.g. ICICI .pdf → ICICIPDFParser, ICICI .xlsx → ICICIParser)
+                parser   = get_parser(source, filename=uf.name)
                 raw_dtos = parser.parse(io.BytesIO(file_bytes), uf.name)
 
                 if raw_dtos:
@@ -281,7 +340,7 @@ def render():
                     f"({dupes} duplicates skipped · {total} total in database)"
                 )
                 st.balloons()
-                # Reset for next import
+                # Reset for next import — no st.rerun(), sidebar stays stable
                 st.session_state.selected_source = None
             else:
                 st.warning(
@@ -291,17 +350,31 @@ def render():
     # ── Format tips ───────────────────────────────────────────────────────
     with st.expander("ℹ️ Format guide & tips"):
         st.markdown("""
-| Source | Format | Notes |
-|--------|--------|-------|
-| **SBI Bank** | `.xlsx` | Standard statement, data starts at row 21 |
-| **ICICI Bank** | `.xls` / `.xlsx` | Statement rows start at row 13, columns B–I |
-| **PhonePe** | `.pdf` | "Download Statement" PDF from the app |
-| **Google Pay** | `.csv` | "Download transaction history" from GPay settings |
-| **HDFC / Axis / Kotak** | `.csv` / `.xlsx` | ZenFinance auto-detects date, debit, credit columns |
-| **Other** | `.csv` / `.xlsx` | Any statement with Date + Amount columns |
+### Audit pipeline roles
+
+| Role | Sources | Effect on audit status |
+|------|---------|------------------------|
+| **🔍 Audit / Ground Truth** | AXIO | Always marks matched bank txns as **Audited** |
+| **🏦 Bank** | SBI, ICICI, HDFC, Axis, Kotak | Primary audit targets |
+| **🏪 Terminal apps** | Swiggy, Zomato, Blinkit, Zepto, BigBasket, Amazon | Marks matched bank txns as **Audited** |
+| **💳 Intermediators** | PhonePe, GPay, Paytm | Enriches records (adds UTR/route) but does **NOT** mark Audited alone |
+
+---
+
+### File formats supported
+
+| Source | Formats | Notes |
+|--------|---------|-------|
+| **SBI Bank** | `.xlsx` · `.xls` · `.pdf` | Excel: data from row 21. PDF: table-extracted automatically |
+| **ICICI Bank** | `.xlsx` · `.xls` · `.pdf` | Excel: rows from row 13, cols B–I. PDF: auto-extracted |
+| **PhonePe** | `.pdf` | "Download Statement" PDF from the PhonePe app |
+| **AXIO** | `.csv` · `.xlsx` | Export from the AXIO finance app — columns auto-detected |
+| **Swiggy / Zomato / Blinkit / Zepto** | `.csv` · `.xlsx` | Order history export — columns auto-detected |
+| **HDFC / Axis / Kotak** | `.csv` · `.xlsx` | Auto-detects date, debit, credit columns |
+| **Other** | `.csv` · `.xlsx` | Any statement with Date + Amount columns |
 
 ---
 🔒 **Deduplication**: MD5 fingerprint of `date + amount + description` — re-uploading the same file is always safe.
 
-🔗 **Fuzzy matching**: *"STRP NETFLIX"* and *"NETFLIX.COM"* are automatically grouped as the same vendor.
+🔗 **Multi-format**: Each source supports multiple file formats. ZenFinance picks the right parser automatically based on the file extension.
         """)
