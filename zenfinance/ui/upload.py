@@ -179,7 +179,7 @@ def render():
         return
 
     # Show selected source pill
-    _, name, emoji, colour, fmts, desc = SOURCE_MAP[source]
+    _, name, emoji, colour, fmts, desc, _group = SOURCE_MAP[source]
     st.markdown(
         f'<div style="display:inline-flex;align-items:center;gap:8px;'
         f'background:{colour}18;border:1px solid {colour}55;border-radius:30px;'
