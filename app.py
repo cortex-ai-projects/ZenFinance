@@ -22,99 +22,256 @@ st.set_page_config(
 # ── Global CSS ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* Hide default chrome */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+
+/* Hide default Streamlit chrome */
 #MainMenu, footer, header { visibility: hidden; }
 
-/* App background */
-.stApp { background-color: #0E1117; }
-.block-container { padding-top: 1.2rem; max-width: 1400px; }
-
-/* Sidebar always dark */
-[data-testid="stSidebar"] {
-    background: #13151f !important;
-    border-right: 1px solid #2A2D3E;
+/* Global App Styling with radial glows */
+.stApp {
+    background: 
+        radial-gradient(circle at 8% 12%, rgba(108, 99, 255, 0.14) 0%, transparent 45%),
+        radial-gradient(circle at 92% 85%, rgba(247, 37, 133, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(67, 217, 173, 0.07) 0%, transparent 50%),
+        #0b0c10 !important;
+    background-attachment: fixed !important;
+    color: #F3F4FD !important;
+    font-family: 'Inter', -apple-system, sans-serif !important;
 }
-[data-testid="stSidebar"] > div:first-child { padding-top: 1rem; }
 
-/* Sidebar collapse button — always keep it accessible */
+/* Container spacing */
+.block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+    max-width: 1440px;
+}
+
+/* Headers */
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    color: #FFFFFF !important;
+    letter-spacing: -0.02em !important;
+}
+
+/* Glassmorphism sidebar positioned properly from top */
+section[data-testid="stSidebar"] {
+    background: rgba(11, 13, 22, 0.6) !important;
+    backdrop-filter: blur(30px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(30px) saturate(180%) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+section[data-testid="stSidebar"] > div {
+    background-color: transparent !important;
+    padding-top: 0 !important;
+}
+div[data-testid="stSidebarUserContent"], section[data-testid="stSidebar"] .block-container {
+    background-color: transparent !important;
+    padding-top: 0 !important; /* Proper placement from top */
+}
+
+/* Sidebar collapse button */
 [data-testid="collapsedControl"] {
-    background: #13151f !important;
-    border-right: 1px solid #2A2D3E !important;
+    background: rgba(11, 13, 22, 0.8) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
     color: #6C63FF !important;
 }
 
-/* Radio nav pills */
-div[data-testid="stSidebar"] .stRadio > div {
-    gap: 4px;
+/* Radio nav pills - Styled like Finova's menu items */
+section[data-testid="stSidebar"] div[data-testid="stRadio"] > div {
+    gap: 6px;
+    padding: 0 4px;
 }
-div[data-testid="stSidebar"] .stRadio label {
-    background: transparent;
-    border-radius: 8px;
-    padding: 8px 14px !important;
-    font-size: 0.92rem !important;
-    color: #CCCCDD !important;
-    cursor: pointer;
-    transition: background .15s;
-    width: 100%;
-    display: block;
+/* Hide the default radio circle/dot indicator */
+section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] label > div:first-child {
+    display: none !important;
 }
-div[data-testid="stSidebar"] .stRadio label:hover {
-    background: rgba(108,99,255,0.15) !important;
-    color: #6C63FF !important;
+/* Style the actual radio option labels */
+section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] label {
+    background: rgba(255, 255, 255, 0.02) !important;
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    border-radius: 12px !important;
+    padding: 10px 16px !important;
+    font-size: 0.94rem !important;
+    font-family: 'Inter', sans-serif !important;
+    color: #8E92B2 !important;
+    cursor: pointer !important;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+    display: flex !important;
+    align-items: center !important;
+    margin-bottom: 6px !important;
+    width: 100% !important;
 }
-div[data-testid="stSidebar"] .stRadio label[data-baseweb="radio"]:has(input:checked) {
-    background: rgba(108,99,255,0.22) !important;
-    color: #6C63FF !important;
+section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] label:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: #FFFFFF !important;
+    transform: translateX(4px) !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] label:has(input[type="radio"]:checked) {
+    background: linear-gradient(135deg, rgba(108, 99, 255, 0.22) 0%, rgba(247, 37, 133, 0.08) 100%) !important;
+    color: #FFFFFF !important;
     font-weight: 600 !important;
-}
-/* Hide radio circle dots */
-div[data-testid="stSidebar"] .stRadio [data-baseweb="radio"] div:first-child {
-    display: none;
-}
-
-/* Metric cards */
-[data-testid="metric-container"] {
-    background: #1A1D2E;
-    border: 1px solid #2A2D3E;
-    border-radius: 12px;
-    padding: 14px 18px;
+    border: 1px solid rgba(108, 99, 255, 0.35) !important;
+    border-left: 4px solid #6C63FF !important; /* Neon purple tab highlight */
+    box-shadow: 
+        0 4px 15px rgba(108, 99, 255, 0.15),
+        inset 0 0 10px rgba(108, 99, 255, 0.1) !important;
 }
 
-/* Buttons */
+/* Glass Card styling (applied globally to metric containers and Plotly charts) */
+[data-testid="metric-container"], div.glass-card, [data-testid="stPlotlyChart"] {
+    background: rgba(22, 25, 41, 0.45) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 16px !important;
+    padding: 20px 24px !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2) !important;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+}
+[data-testid="metric-container"]:hover, div.glass-card:hover, [data-testid="stPlotlyChart"]:hover {
+    transform: translateY(-4px);
+    background: rgba(22, 25, 41, 0.55) !important;
+    border-color: rgba(108, 99, 255, 0.25) !important;
+    box-shadow: 0 12px 40px 0 rgba(108, 99, 255, 0.15) !important;
+}
+
+/* Glass Buttons */
+.stButton button {
+    background: rgba(255, 255, 255, 0.05) !important;
+    color: #FFFFFF !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 12px !important;
+    padding: 10px 24px !important;
+    font-weight: 500 !important;
+    transition: all 0.25s ease !important;
+}
+.stButton button:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    transform: translateY(-1px);
+}
 .stButton button[kind="primary"] {
-    background: linear-gradient(135deg,#6C63FF,#9B59B6);
-    border: none; border-radius: 8px; font-weight: 600;
+    background: linear-gradient(135deg, #6C63FF 0%, #8E2DE2 100%) !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    box-shadow: 0 4px 15px rgba(108, 99, 255, 0.3) !important;
 }
-.stButton button[kind="primary"]:hover { opacity: .88; }
+.stButton button[kind="primary"]:hover {
+    box-shadow: 0 6px 20px rgba(108, 99, 255, 0.45) !important;
+    opacity: 0.95;
+}
 
-/* Tables */
-.stDataFrame { border: 1px solid #2A2D3E; border-radius: 10px; overflow: hidden; }
+/* Tables and Dataframes */
+.stDataFrame {
+    background: rgba(22, 25, 41, 0.3) !important;
+    backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    border-radius: 14px !important;
+    overflow: hidden;
+}
 
 /* Tabs */
-[data-testid="stTabs"] [role="tab"] { color: #8888AA; }
+[data-testid="stTabs"] {
+    background: transparent !important;
+    margin-bottom: 20px;
+}
+[data-testid="stTabs"] [role="tablist"] {
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.03) !important;
+    padding: 6px !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+[data-testid="stTabs"] [role="tab"] {
+    color: #8E92B2 !important;
+    font-weight: 500 !important;
+    border: none !important;
+    border-radius: 10px !important;
+    padding: 8px 16px !important;
+    background: transparent !important;
+    transition: all 0.2s ease !important;
+}
+[data-testid="stTabs"] [role="tab"]:hover {
+    color: #FFFFFF !important;
+    background: rgba(255, 255, 255, 0.04) !important;
+}
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
-    color: #6C63FF; border-bottom: 2px solid #6C63FF;
+    color: #FFFFFF !important;
+    background: rgba(108, 99, 255, 0.2) !important;
+    border: 1px solid rgba(108, 99, 255, 0.3) !important;
 }
 
-/* Expander */
-details summary { color: #6C63FF; }
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #0E1117; }
-::-webkit-scrollbar-thumb { background: #2A2D3E; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #6C63FF; }
-
-/* Inputs */
-.stTextInput input, .stNumberInput input, .stDateInput input {
-    background: #1A1D2E; border: 1px solid #2A2D3E;
-    color: #FAFAFA; border-radius: 8px;
+/* Expanders */
+details {
+    background: rgba(22, 25, 41, 0.25) !important;
+    border: 1px solid rgba(255, 255, 255, 0.05) !important;
+    border-radius: 14px !important;
+    padding: 4px 8px !important;
+    margin-bottom: 8px !important;
 }
-div[data-baseweb="select"] { background: #1A1D2E !important; }
+details summary {
+    color: #FFFFFF !important;
+    font-weight: 500 !important;
+    cursor: pointer;
+}
+details summary:hover {
+    color: #6C63FF !important;
+}
 
-/* Info / success / warning boxes */
-.stAlert { border-radius: 10px; }
+/* Premium Scrollbars */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(108, 99, 255, 0.4);
+}
+
+/* Form Inputs styling */
+.stTextInput input, .stNumberInput input, .stDateInput input, div[data-baseweb="select"] {
+    background: rgba(22, 25, 41, 0.4) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    color: #FFFFFF !important;
+    border-radius: 12px !important;
+    padding: 8px 12px !important;
+    transition: all 0.25s ease !important;
+}
+.stTextInput input:focus, .stNumberInput input:focus, .stDateInput input:focus {
+    border-color: rgba(108, 99, 255, 0.5) !important;
+    box-shadow: 0 0 10px rgba(108, 99, 255, 0.2) !important;
+}
+div[data-baseweb="select"] > div {
+    background: transparent !important;
+    border: none !important;
+    color: #FFFFFF !important;
+}
+
+/* Alert dialogs */
+.stAlert {
+    background: rgba(22, 25, 41, 0.45) !important;
+    backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    border-radius: 14px !important;
+}
+
+/* Dividers */
+hr {
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    margin: 1.5rem 0 !important;
+}
 </style>
+
 """, unsafe_allow_html=True)
 
 # ── Auto-refresh every 5 minutes (300 000 ms) ──────────────────────────────
@@ -127,11 +284,67 @@ components.html(
 
 # ── Lazy page imports ──────────────────────────────────────────────────────
 from zenfinance.data_store import load_all
-from zenfinance.ui import dashboard, upload, transactions, audit, settings
+from zenfinance.ui import dashboard, upload, transactions, audit, settings, timeline
+
+# ── Authentication ─────────────────────────────────────────────────────────
+import extra_streamlit_components as stx
+
+cookie_manager = stx.CookieManager(key="auth_manager")
+st.session_state["cookie_manager"] = cookie_manager
+
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+# Check cookie if not authenticated in session
+if not st.session_state["authenticated"]:
+    try:
+        cookie_val = cookie_manager.get(cookie="auth_pin")
+        if cookie_val == "124816":
+            st.session_state["authenticated"] = True
+            st.rerun()
+    except Exception:
+        # Ignore initial loading exceptions of cookie manager
+        pass
+
+# If still not authenticated, show login page
+if not st.session_state["authenticated"]:
+    # Empty space to push login card down
+    st.write("##")
+    st.write("##")
+    
+    # Visual centering using columns
+    c1, c2, c3 = st.columns([1, 1.8, 1])
+    with c2:
+        st.markdown("""
+        <div class="glass-card" style="padding:40px; text-align:center; margin-bottom:20px; border:1px solid rgba(108, 99, 255, 0.2) !important;">
+          <div style="font-size:3rem; margin-bottom:15px; filter: drop-shadow(0 0 15px rgba(108, 99, 255, 0.4));">🔑</div>
+          <h2 style="margin-bottom:10px; font-family:'Outfit', sans-serif;">ZenFinance Security</h2>
+          <p style="color:#8E92B2; font-size:0.92rem; margin-bottom:25px;">Enter the security PIN to access your personal dashboard</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # PIN Form input
+        pin_input = st.text_input("Enter 6-digit PIN", type="password", key="pin_input", placeholder="••••••", label_visibility="collapsed")
+        
+        if pin_input:
+            if pin_input == "124816":
+                st.session_state["authenticated"] = True
+                try:
+                    cookie_manager.set(cookie="auth_pin", val="124816", max_age=86400) # 24 hours
+                except Exception:
+                    pass
+                st.success("Access Granted! Loading...")
+                time.sleep(0.6)
+                st.rerun()
+            else:
+                st.error("Incorrect PIN. Please try again.")
+                
+    st.stop()
 
 # ── Nav mapping ───────────────────────────────────────────────────────────
 NAV_OPTIONS = [
     "📊  Dashboard",
+    "📅  Data Timeline",
     "📥  Import Data",
     "💳  Transactions",
     "🔍  Audit",
@@ -139,6 +352,7 @@ NAV_OPTIONS = [
 ]
 NAV_KEYS = {
     "📊  Dashboard":    "dashboard",
+    "📅  Data Timeline": "timeline",
     "📥  Import Data":  "import",
     "💳  Transactions": "transactions",
     "🔍  Audit":        "audit",
@@ -149,7 +363,7 @@ NAV_KEYS = {
 with st.sidebar:
     # Logo
     st.markdown("""
-    <div style="display:flex;align-items:center;gap:10px;padding:4px 0 20px 4px">
+    <div style="display:flex;align-items:center;gap:12px;padding:24px 0 20px 12px">
       <div style="font-size:2rem;line-height:1">💰</div>
       <div>
         <div style="font-size:1.2rem;font-weight:700;color:#FAFAFA;line-height:1.2">ZenFinance</div>
@@ -188,10 +402,12 @@ with st.sidebar:
         max_d = df_all["date"].max().date() if not df_all["date"].isna().all() else date.today()
         date_from = st.date_input("From", value=min_d, min_value=min_d, max_value=max_d, key="sb_from")
         date_to   = st.date_input("To",   value=max_d, min_value=min_d, max_value=max_d, key="sb_to")
+        granularity = st.selectbox("Granularity", ["Daily", "Weekly", "Monthly"], index=1, key="sb_granularity")
     else:
         filter_source = "All"
         date_from = date.today() - timedelta(days=365)
         date_to   = date.today()
+        granularity = "Weekly"
         st.caption("Import data to enable filters.")
 
     st.markdown("---")
@@ -217,6 +433,17 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    # ── User Profile Card ──────────────────────────────────────────────────
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:12px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:14px;margin-top:20px">
+      <div style="font-size:1.2rem;background:rgba(108,99,255,0.15);width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#6C63FF;font-weight:700">P</div>
+      <div>
+        <div style="font-size:0.82rem;font-weight:600;color:#FFFFFF;line-height:1.2">Pankaj Sharma</div>
+        <div style="font-size:0.65rem;color:#8E92B2">Personal Account</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 # ── Apply sidebar filters to dataframe ────────────────────────────────────
 def _filtered_df() -> pd.DataFrame:
     df = load_all()
@@ -234,7 +461,10 @@ def _filtered_df() -> pd.DataFrame:
 
 # ── Page router ────────────────────────────────────────────────────────────
 if page == "dashboard":
-    dashboard.render(_filtered_df())
+    dashboard.render(_filtered_df(), granularity)
+
+elif page == "timeline":
+    timeline.render(_filtered_df())
 
 elif page == "import":
     upload.render()

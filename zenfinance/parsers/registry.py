@@ -19,6 +19,7 @@ from zenfinance.parsers.icici    import ICICIParser
 from zenfinance.parsers.icici_pdf import ICICIPDFParser
 from zenfinance.parsers.phonepe  import PhonePeParser
 from zenfinance.parsers.gpay     import GPayParser
+from zenfinance.parsers.gpay_pdf import GPayPDFParser
 from zenfinance.parsers.axio     import AXIOParser
 from zenfinance.parsers.generic  import GenericParser
 
@@ -30,9 +31,10 @@ PARSER_REGISTRY: dict[str, dict[str, type]] = {
 
     # ── Banks ──────────────────────────────────────────────────────────────
     "SBI Bank": {
-        ".xlsx":     SBIParser,
-        ".xls":      SBIParser,
-        ".pdf":      SBIPDFParser,
+        ".xlsx":       SBIParser,
+        ".xls":        SBIParser,
+        ".csv":        SBIParser,   # SBI CSV export — auto-detects header row
+        ".pdf":        SBIPDFParser,
         "__default__": SBIParser,
     },
     "ICICI Bank": {
@@ -68,8 +70,9 @@ PARSER_REGISTRY: dict[str, dict[str, type]] = {
         "__default__": PhonePeParser,
     },
     "Google Pay": {
-        ".csv":      GPayParser,
-        "__default__": GPayParser,
+        ".csv":        GPayParser,
+        ".pdf":        GPayPDFParser,
+        "__default__": GPayPDFParser,
     },
     "Paytm": {
         ".csv":      GenericParser,

@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Google Cloud credentials
+gcp_credentials.json
+# Local data directory for fallback
+data/
+backups/

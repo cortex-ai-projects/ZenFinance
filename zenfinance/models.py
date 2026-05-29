@@ -27,6 +27,7 @@ TRANSACTION_COLUMNS = [
     "reference_number",
     "audit_status",
     "duplicate_transaction_id",
+    "money_trail_id",
     "system_comment",
     "source_file",
 ]
@@ -58,6 +59,7 @@ class TransactionDTO:
         utr_number: Optional[str] = None,
         audit_status: AuditStatus = "Pending",
         duplicate_transaction_id: Optional[uuid.UUID] = None,
+        money_trail_id: Optional[str] = None,
         reference_number: Optional[str] = None,
         system_comment: Optional[str] = None,
         source_file: Optional[str] = None,
@@ -78,6 +80,7 @@ class TransactionDTO:
         self.utr_number = utr_number
         self.audit_status = audit_status
         self.duplicate_transaction_id = duplicate_transaction_id
+        self.money_trail_id = money_trail_id
         self.reference_number = reference_number
         self.system_comment = system_comment
         self.source_file = source_file
@@ -108,6 +111,7 @@ class TransactionDTO:
             "reference_number": str(self.reference_number) if self.reference_number else None,
             "audit_status": self.audit_status,
             "duplicate_transaction_id": str(self.duplicate_transaction_id) if self.duplicate_transaction_id else None,
+            "money_trail_id": str(self.money_trail_id) if self.money_trail_id else None,
             "system_comment": self.system_comment,
             "source_file": self.source_file,
         }

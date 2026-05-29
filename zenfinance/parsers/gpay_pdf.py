@@ -1,23 +1,21 @@
 """
-ZenFinance — PhonePe PDF Statement Parser
+ZenFinance — Google Pay PDF Statement Parser
 
-Real PhonePe PDF layout (pdftotext -layout):
-─────────────────────────────────────────────
-Date                    Transaction Details                                Type         Amount
+Real GPay PDF layout (pdftotext -layout):
+─────────────────────────────────────────
+Date & time                     Transaction details                                                                                Amount
 
-Jul 05, 2020            Paid to PhonePe                                    Debit        INR 149.00
-01:46 PM                Transaction ID : N2007051346285812251717
-                        UTR No : 018752001587
-                        Debited from XXXX61
+01 Oct, 2025                    Paid to VJ82 MY HOME MANGALA                                                                       ₹104.40
+08:18 AM                        UPI Transaction ID: 564015404173
+                                    Paid by IDFC Bank XX41 | RuPay credit card
 
 Each transaction block has:
-  Line 1: date + merchant + type + amount
-  Line 2: time + Transaction ID
-  Line 3: UTR No (optional)
-  Line 4: account info
+  Line 1: date + "Paid to MERCHANT" or "Received from MERCHANT" + ₹Amount
+  Line 2: time + UPI Transaction ID: NNNNN
+  Line 3: Paid by / Received in BANK INFO
   Blank line separator
 
-Some amounts wrap to the next line (e.g. "INR\\n13000.00")
+Amounts use ₹ symbol (not "INR") and may have commas: ₹3,900 or ₹104.40
 """
 from __future__ import annotations
 
@@ -36,22 +34,21 @@ from zenfinance.parsers.base import BaseParser
 
 # ── Regexes ─────────────────────────────────────────────────────────────
 _DATE_RE = re.compile(
-    r"^((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4})",
+    r"^(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec),\s+\d{4})",
     re.IGNORECASE,
 )
-_AMOUNT_RE    = re.compile(r"INR\s*([\d,]+\.?\d*)")
-_AMOUNT_CONT  = re.compile(r"^\s*([\d,]+\.\d{2})\s*$")  # wrapped amount on its own line
-_TXN_ID_RE    = re.compile(r"Transaction ID\s*:\s*(\S+)")
-_UTR_RE       = re.compile(r"UTR No\.?\s*:\s*(\S+)")
-_PAID_RE      = re.compile(r"Paid to\s+(.+?)(?:\s{3,}|$)")
-_RECEIVED_RE  = re.compile(r"Received from\s+(.+?)(?:\s{3,}|$)")
-_TYPE_RE      = re.compile(r"\b(Debit|Credit)\b", re.IGNORECASE)
-_ACCOUNT_RE   = re.compile(r"(?:Debited|Credited)\s+(?:from|to)\s+(\S+)")
+_AMOUNT_RE    = re.compile(r"₹([\d,]+\.?\d*)")
+_TXN_ID_RE    = re.compile(r"UPI Transaction ID:\s*(\d+)")
+_PAID_RE      = re.compile(r"Paid to\s+(.+?)(?:\s{3,}|₹|$)")
+_RECEIVED_RE  = re.compile(r"Received from\s+(.+?)(?:\s{3,}|₹|$)")
+_PAID_BY_RE   = re.compile(r"Paid by\s+(.+)")
+_RECV_IN_RE   = re.compile(r"Received in\s+(.+)")
+_PAGE_RE      = re.compile(r"Page\s+\d+\s+of\s+\d+", re.IGNORECASE)
 
 _DATE_FMTS = [
-    "%b %d, %Y",    # Jul 05, 2020
-    "%B %d, %Y",    # July 05, 2020
-    "%d %b %Y",     # 05 Jul 2020
+    "%d %b, %Y",   # 01 Oct, 2025
+    "%d %B, %Y",   # 01 October, 2025
+    "%d %b %Y",    # 01 Oct 2025
 ]
 
 
@@ -93,30 +90,42 @@ def _extract_text_layout(file_bytes: bytes) -> str:
 
 def _parse_layout(text: str) -> List[dict]:
     """
-    Parse PhonePe -layout text into transaction dicts.
-
-    Each transaction is a block of lines starting with a date line,
-    followed by time, Transaction ID, UTR, account info, then a blank gap.
+    Parse GPay -layout text into transaction dicts.
+    Each transaction is a block starting with a date line.
     """
     lines = text.splitlines()
     transactions = []
-    current = None   # {"date": ..., "merchant": ..., "type": ..., "amount": ..., "txn_id": ..., "utr": ...}
+    current = None
 
-    i = 0
-    while i < len(lines):
-        line = lines[i]
+    for line in lines:
         stripped = line.strip()
 
-        # Skip empties and header
-        if not stripped or "Transaction Statement for" in stripped:
-            # Flush current if we hit a blank line
+        # Skip empties, headers, page numbers, notes
+        if not stripped:
             if current and current.get("date") and current.get("amount", 0) > 0:
                 transactions.append(current)
                 current = None
-            i += 1
             continue
 
-        # Check if this line starts a new transaction (date at left margin)
+        if (
+            "Transaction statement" in stripped
+            or "Date & time" in stripped
+            or "Transaction details" in stripped
+            or _PAGE_RE.search(stripped)
+            or stripped.startswith("Note:")
+            or "pankaj" in stripped.lower()
+            or "7248587306" in stripped
+            or "Transaction statement period" in stripped
+            or "This statement reflects" in stripped
+            or "deleted from your Google" in stripped
+        ):
+            continue
+
+        # Summary line like "Sent ₹35,988.75 Received ₹0"
+        if re.match(r"^\s*(Sent|Received)\b", stripped):
+            continue
+
+        # Check if this line starts a new transaction
         date_m = _DATE_RE.match(stripped)
         if date_m:
             # Flush previous
@@ -124,10 +133,9 @@ def _parse_layout(text: str) -> List[dict]:
                 transactions.append(current)
 
             txn_date = _parse_date(date_m.group(1))
-
-            # Extract merchant, type, amount from rest of line
             rest = line[line.index(date_m.group(1)) + len(date_m.group(1)):]
 
+            # Extract merchant
             merchant = ""
             paid_m = _PAID_RE.search(rest)
             recv_m = _RECEIVED_RE.search(rest)
@@ -136,9 +144,12 @@ def _parse_layout(text: str) -> List[dict]:
             elif recv_m:
                 merchant = recv_m.group(1).strip()
 
-            type_m = _TYPE_RE.search(rest)
-            txn_type = type_m.group(1).upper() if type_m else None
+            # Determine type
+            txn_type = "DEBIT"
+            if recv_m:
+                txn_type = "CREDIT"
 
+            # Extract amount (₹ symbol)
             amount = 0.0
             amt_m = _AMOUNT_RE.search(rest)
             if amt_m:
@@ -150,38 +161,30 @@ def _parse_layout(text: str) -> List[dict]:
                 "type": txn_type,
                 "amount": amount,
                 "txn_id": None,
-                "utr": None,
-                "account": None,
+                "payment_info": None,
             }
-            i += 1
             continue
 
-        # Continuation lines for current transaction
+        # Continuation lines
         if current is not None:
-            # Check for wrapped amount (INR was on prev line, amount on this line)
-            if current["amount"] == 0:
-                amt_cont = _AMOUNT_CONT.match(stripped)
-                if amt_cont:
-                    current["amount"] = _parse_amount(amt_cont.group(1))
-                    i += 1
-                    continue
-                amt_m = _AMOUNT_RE.search(stripped)
-                if amt_m:
-                    current["amount"] = _parse_amount(amt_m.group(1))
-
             txn_m = _TXN_ID_RE.search(stripped)
             if txn_m:
                 current["txn_id"] = txn_m.group(1).strip()
 
-            utr_m = _UTR_RE.search(stripped)
-            if utr_m:
-                current["utr"] = utr_m.group(1).strip()
+            paid_by_m = _PAID_BY_RE.search(stripped)
+            recv_in_m = _RECV_IN_RE.search(stripped)
+            if paid_by_m:
+                current["payment_info"] = paid_by_m.group(1).strip()
+            elif recv_in_m:
+                current["payment_info"] = recv_in_m.group(1).strip()
 
-            acct_m = _ACCOUNT_RE.search(stripped)
-            if acct_m:
-                current["account"] = acct_m.group(1).strip()
+            # Pick up amount if missing (wrapped to next line)
+            if current["amount"] == 0:
+                amt_m = _AMOUNT_RE.search(stripped)
+                if amt_m:
+                    current["amount"] = _parse_amount(amt_m.group(1))
 
-            # If no merchant yet and line has "Paid to"
+            # Pick up merchant if missing
             if not current["merchant"]:
                 paid_m = _PAID_RE.search(stripped)
                 recv_m = _RECEIVED_RE.search(stripped)
@@ -190,14 +193,6 @@ def _parse_layout(text: str) -> List[dict]:
                 elif recv_m:
                     current["merchant"] = recv_m.group(1).strip()
 
-            # Pick up type if missing
-            if not current["type"]:
-                type_m = _TYPE_RE.search(stripped)
-                if type_m:
-                    current["type"] = type_m.group(1).upper()
-
-        i += 1
-
     # Flush last block
     if current and current.get("date") and current.get("amount", 0) > 0:
         transactions.append(current)
@@ -205,8 +200,8 @@ def _parse_layout(text: str) -> List[dict]:
     return transactions
 
 
-class PhonePeParser(BaseParser):
-    bank_name = "PhonePe"
+class GPayPDFParser(BaseParser):
+    bank_name = "Google Pay"
 
     def parse(self, file_like, filename: str) -> List[TransactionDTO]:
         raw = file_like.read() if hasattr(file_like, "read") else file_like
@@ -228,14 +223,14 @@ class PhonePeParser(BaseParser):
         if not isinstance(txn_date, date):
             return None
 
-        amount   = float(row.get("amount", 0))
+        amount = float(row.get("amount", 0))
         txn_type = row.get("type", "DEBIT")
         if txn_type not in ("DEBIT", "CREDIT") or amount == 0:
             return None
 
         merchant = row.get("merchant", "") or ""
-        utr      = row.get("utr")
-        txn_id   = row.get("txn_id")
+        txn_id = row.get("txn_id")
+        payment_info = row.get("payment_info", "")
 
         return TransactionDTO(
             id=uuid.uuid4(),
@@ -247,7 +242,7 @@ class PhonePeParser(BaseParser):
             bank_name=self.bank_name,
             payment_method="UPI",
             transaction_id=txn_id,
-            utr_number=utr,
+            system_comment=payment_info if payment_info else None,
             audit_status="Pending",
             source_file=filename,
         )

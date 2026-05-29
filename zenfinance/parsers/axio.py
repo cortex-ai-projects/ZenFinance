@@ -4,18 +4,26 @@ AXIO is the user's personal finance / expense-tracking app where they
 manually update transaction details and tags.  Importing an AXIO export
 acts as the **ground truth** for audit reconciliation.
 
-Supported export formats:
-  • CSV  — most common AXIO export
-  • XLSX — some versions export Excel
+Real AXIO CSV / XLSX format (discovered from actual export):
+─────────────────────────────────────────────────────────────
+  Row 0  : metadata header ("axio", "EXPENSE", "REPORT", …)
+  Row 1  : Name
+  Row 2  : Phone Number
+  Row 3  : Email
+  Row 4  : FROM … TO date range
+  Row 5  : blank
+  Row 6  : actual column headers ← auto-detected
+  Row 7+ : transaction data
 
-Typical AXIO CSV columns (ZenFinance will auto-detect variations):
-  Date | Account | Category | Sub-category | Description/Merchant | Amount | Type | Tags | Notes | Currency
+Actual columns:
+  DATE | TIME | PLACE | AMOUNT | DR/CR | ACCOUNT | EXPENSE | INCOME | CATEGORY | TAGS | NOTE
 
-Key rule: any transaction imported from AXIO automatically gets
-  audit_status = "Audited"  (it IS the audit source).
+Key rule: every transaction imported from AXIO gets audit_status = "Audited"
+because AXIO IS the audit source (user's manually curated ledger).
 """
 from __future__ import annotations
 
+import io
 import re
 import uuid
 from datetime import datetime, date
@@ -27,21 +35,8 @@ from zenfinance.models import TransactionDTO
 from zenfinance.parsers.base import BaseParser
 
 
-# ── Column name candidates (case-insensitive) ──────────────────────────────
-_DATE_COLS   = ["date", "transaction date", "txn date", "posting date", "value date",
-                "created at", "created", "time"]
-_DESC_COLS   = ["description", "merchant", "merchant name", "narration", "note",
-                "notes", "particulars", "details", "name", "payee", "title"]
-_AMOUNT_COLS = ["amount", "transaction amount", "amount (inr)", "inr", "value",
-                "net amount", "total"]
-_TYPE_COLS   = ["type", "transaction type", "txn type", "dr/cr", "debit/credit",
-                "direction"]
-_DEBIT_COLS  = ["debit", "expense", "dr", "withdrawal", "paid"]
-_CREDIT_COLS = ["credit", "income", "cr", "deposit", "received"]
-_CAT_COLS    = ["category", "cat", "expense category", "category name"]
-_SUBCAT_COLS = ["sub-category", "subcategory", "sub category", "sub cat"]
-_TAG_COLS    = ["tags", "tag", "label", "labels"]
-_ACCT_COLS   = ["account", "bank", "source", "wallet", "payment method"]
+# ── Known AXIO header tokens (used to auto-locate the real header row) ──────
+_AXIO_HEADER_TOKENS = {"date", "amount", "dr/cr", "place", "category", "account"}
 
 _DATE_FMTS = [
     "%Y-%m-%d",
@@ -54,17 +49,34 @@ _DATE_FMTS = [
     "%Y/%m/%d",
     "%b %d, %Y",
     "%d-%b-%Y",
-    "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%d %H:%M:%S",
 ]
 
 
-def _find_col(df: pd.DataFrame, candidates: list) -> Optional[str]:
-    norm = {c.lower().strip(): c for c in df.columns}
-    for cand in candidates:
-        if cand.lower() in norm:
-            return norm[cand.lower()]
-    return None
+def _find_header_row(raw_bytes: bytes, encoding: str = "utf-8") -> int:
+    """
+    Scan lines of a CSV looking for the real header row.
+    Returns the 0-based row index whose cells contain the most AXIO header tokens.
+    Stops searching after row 30 (metadata block is always short).
+    """
+    try:
+        text = raw_bytes.decode(encoding, errors="replace")
+    except Exception:
+        return 0
+
+    lines = text.splitlines()
+    best_row, best_score = 0, 0
+
+    for i, line in enumerate(lines[:30]):
+        # Strip quotes, split on comma
+        cells = [c.strip().strip('"').strip("'").lower() for c in line.split(",")]
+        score = sum(1 for t in _AXIO_HEADER_TOKENS if any(t in c for c in cells))
+        if score > best_score:
+            best_score = score
+            best_row   = i
+        if best_score >= 3:   # confident enough
+            break
+
+    return best_row
 
 
 def _parse_date(raw) -> Optional[date]:
@@ -72,7 +84,7 @@ def _parse_date(raw) -> Optional[date]:
         return raw.date()
     if isinstance(raw, date):
         return raw
-    if pd.isna(raw):
+    if pd.isna(raw) if not isinstance(raw, str) else not raw.strip():
         return None
     s = str(raw).strip()
     for fmt in _DATE_FMTS:
@@ -83,120 +95,181 @@ def _parse_date(raw) -> Optional[date]:
     return None
 
 
+def _safe_amount(val) -> float:
+    """Strip commas, currency symbols, quotes; return float."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return 0.0
+    s = re.sub(r"[₹,'\"\s]", "", str(val).strip())
+    try:
+        return abs(float(s))
+    except ValueError:
+        return 0.0
+
+
+def _read_axio_df(file_like, filename: str) -> pd.DataFrame:
+    """
+    Read the AXIO file, auto-skipping metadata rows at the top.
+    Tries CSV then XLSX, and within CSV tries multiple encodings.
+    Returns a DataFrame with the real headers as column names.
+    """
+    fname = filename.lower()
+
+    # ── Excel path ──────────────────────────────────────────────────────────
+    if fname.endswith((".xlsx", ".xls")):
+        # Try different skiprows (0–10) until we find the DATE column
+        raw_bytes = file_like.read() if hasattr(file_like, "read") else file_like
+        for skip in range(0, 15):
+            try:
+                df = pd.read_excel(io.BytesIO(raw_bytes), skiprows=skip, dtype=str)
+                cols_lower = [str(c).lower().strip() for c in df.columns]
+                if "date" in cols_lower and "amount" in cols_lower:
+                    return df
+            except Exception:
+                continue
+        # Last resort: no skip
+        return pd.read_excel(io.BytesIO(raw_bytes), dtype=str)
+
+    # ── CSV path ─────────────────────────────────────────────────────────────
+    raw_bytes = file_like.read() if hasattr(file_like, "read") else file_like
+
+    # Try each encoding
+    for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+        try:
+            header_row = _find_header_row(raw_bytes, enc)
+            df = pd.read_csv(
+                io.BytesIO(raw_bytes),
+                skiprows=header_row,
+                dtype=str,
+                encoding=enc,
+            )
+            cols_lower = [str(c).lower().strip() for c in df.columns]
+            if "date" in cols_lower:
+                return df
+        except Exception:
+            continue
+
+    raise ValueError(
+        f"Could not read AXIO file '{filename}' — no recognisable date column found."
+    )
+
+
+def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip whitespace / quotes from column names, lowercase for matching."""
+    df = df.copy()
+    df.columns = [
+        str(c).strip().strip('"').strip("'").upper()
+        for c in df.columns
+    ]
+    return df
+
+
 class AXIOParser(BaseParser):
     """
     Parses AXIO personal finance app exports (CSV / XLSX).
 
     All transactions from AXIO are marked audit_status="Audited" because
-    AXIO is Pankaj's manual ground-truth ledger.
+    AXIO is Pankaj's manually curated ground-truth ledger.
     """
 
     bank_name = "AXIO"
 
     def parse(self, file_like, filename: str) -> List[TransactionDTO]:
-        fname = filename.lower()
-        try:
-            if fname.endswith(".csv"):
-                df = pd.read_csv(file_like, dtype=str)
-            else:
-                df = pd.read_excel(file_like, dtype=str)
-        except Exception as e:
-            raise ValueError(f"Could not read AXIO file '{filename}': {e}")
+        df = _read_axio_df(file_like, filename)
+        df = _normalise_columns(df)
 
-        if df.empty:
-            return []
+        # Map AXIO column names to our canonical names
+        # The actual AXIO columns are: DATE TIME PLACE AMOUNT DR/CR ACCOUNT
+        #                               EXPENSE INCOME CATEGORY TAGS NOTE
+        col_date     = self._find(df, ["DATE"])
+        col_place    = self._find(df, ["PLACE", "DESCRIPTION", "MERCHANT", "NOTE", "NARRATION"])
+        col_amount   = self._find(df, ["AMOUNT", "TRANSACTION AMOUNT", "AMOUNT (INR)"])
+        col_drcr     = self._find(df, ["DR/CR", "TYPE", "TRANSACTION TYPE", "TXN TYPE", "DR_CR"])
+        col_category = self._find(df, ["CATEGORY", "CAT", "EXPENSE CATEGORY"])
+        col_tags     = self._find(df, ["TAGS", "TAG", "LABEL"])
+        col_note     = self._find(df, ["NOTE", "NOTES", "REMARKS", "NARRATION"])
+        col_account  = self._find(df, ["ACCOUNT", "BANK", "SOURCE", "WALLET"])
 
-        # Detect columns
-        date_col   = _find_col(df, _DATE_COLS)
-        desc_col   = _find_col(df, _DESC_COLS)
-        amount_col = _find_col(df, _AMOUNT_COLS)
-        type_col   = _find_col(df, _TYPE_COLS)
-        debit_col  = _find_col(df, _DEBIT_COLS)
-        credit_col = _find_col(df, _CREDIT_COLS)
-        cat_col    = _find_col(df, _CAT_COLS)
-        subcat_col = _find_col(df, _SUBCAT_COLS)
-        tag_col    = _find_col(df, _TAG_COLS)
-
-        if date_col is None:
+        if col_date is None:
             raise ValueError(
-                "Cannot find a date column in AXIO file. "
-                f"Columns present: {list(df.columns)}"
+                f"Cannot find a DATE column in AXIO file '{filename}'. "
+                f"Columns found: {list(df.columns)}"
             )
 
         dtos = []
         for _, row in df.iterrows():
             dto = self._convert_row(
                 row, filename,
-                date_col, desc_col, amount_col, type_col,
-                debit_col, credit_col, cat_col, subcat_col, tag_col,
+                col_date, col_place, col_amount, col_drcr,
+                col_category, col_tags, col_note, col_account,
             )
             if dto:
                 dtos.append(dto)
         return dtos
 
+    # ── Helpers ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _find(df: pd.DataFrame, candidates: list) -> Optional[str]:
+        for cand in candidates:
+            if cand in df.columns:
+                return cand
+        # Partial match fallback
+        for cand in candidates:
+            for col in df.columns:
+                if cand in col:
+                    return col
+        return None
+
     def _convert_row(
         self, row: pd.Series, filename: str,
-        date_col, desc_col, amount_col, type_col,
-        debit_col, credit_col, cat_col, subcat_col, tag_col,
+        col_date, col_place, col_amount, col_drcr,
+        col_category, col_tags, col_note, col_account,
     ) -> Optional[TransactionDTO]:
 
         # ── Date ──────────────────────────────────────────────────────────
-        txn_date = _parse_date(row.get(date_col) if date_col else None)
+        txn_date = _parse_date(row.get(col_date) if col_date else None)
         if txn_date is None:
             return None
 
-        # ── Description ───────────────────────────────────────────────────
-        desc = self._safe_str(row.get(desc_col, "") if desc_col else "")
-
-        # ── Amount & type ─────────────────────────────────────────────────
-        txn_type: Optional[str] = None
-        amount   = 0.0
-
-        if debit_col and credit_col:
-            d = self._safe_float(row.get(debit_col, 0))
-            c = self._safe_float(row.get(credit_col, 0))
-            if d > 0:
-                txn_type, amount = "DEBIT", d
-            elif c > 0:
-                txn_type, amount = "CREDIT", c
-
-        if txn_type is None and amount_col:
-            raw_amt = self._safe_float(row.get(amount_col, 0))
-            amount  = abs(raw_amt)
-
-            if type_col:
-                t = str(row.get(type_col, "")).upper().strip()
-                if any(x in t for x in ["DR", "DEBIT", "EXPENSE", "PAID", "W"]):
-                    txn_type = "DEBIT"
-                elif any(x in t for x in ["CR", "CREDIT", "INCOME", "RECEIVED", "D"]):
-                    txn_type = "CREDIT"
-
-            if txn_type is None:
-                # Infer from sign of raw amount
-                txn_type = "CREDIT" if raw_amt > 0 else "DEBIT"
-
-        if amount == 0 or txn_type is None:
+        # ── Amount ────────────────────────────────────────────────────────
+        amount = _safe_amount(row.get(col_amount) if col_amount else None)
+        if amount == 0:
             return None
 
-        # ── Category / tags ───────────────────────────────────────────────
-        category    = self._safe_str(row.get(cat_col,    "") if cat_col    else "") or None
-        sub_category = self._safe_str(row.get(subcat_col, "") if subcat_col else "") or None
-        tags        = self._safe_str(row.get(tag_col,    "") if tag_col    else "") or None
+        # ── Transaction type: DR → DEBIT, CR → CREDIT ─────────────────────
+        drcr_raw = str(row.get(col_drcr, "")).strip().upper() if col_drcr else ""
+        if "CR" in drcr_raw and "DR" not in drcr_raw:
+            txn_type = "CREDIT"
+        else:
+            txn_type = "DEBIT"   # default; DR or anything else
+
+        # ── Description / merchant ─────────────────────────────────────────
+        place = self._safe_str(row.get(col_place, "") if col_place else "")
+        note  = self._safe_str(row.get(col_note, "")  if col_note  else "")
+        desc  = place or note or "(AXIO entry)"
+
+        # ── Category & tags ────────────────────────────────────────────────
+        category = self._safe_str(row.get(col_category, "") if col_category else "") or None
+        tags     = self._safe_str(row.get(col_tags,    "") if col_tags    else "") or None
+        account  = self._safe_str(row.get(col_account, "") if col_account else "") or None
+
+        # Build a system_comment with the account so we can cross-reference later
+        comment = f"AXIO account: {account}" if account else "Imported from AXIO"
 
         return TransactionDTO(
             id=uuid.uuid4(),
             date=txn_date,
             amount=amount,
             bank_description=desc,
-            details=desc,
+            details=note or place,
             txn_type=txn_type,
             bank_name=self.bank_name,
             payment_method="AXIO",
             category=category,
-            sub_category=sub_category,
+            sub_category=None,
             tags=tags,
-            # AXIO imports are the user's own audit records — always Audited
+            # AXIO is the audit ground truth — always mark Audited
             audit_status="Audited",
-            system_comment="Imported from AXIO (user's audit ledger)",
+            system_comment=comment,
             source_file=filename,
         )

@@ -28,8 +28,8 @@ STATUS_COLOURS = {
 
 def _badge(text: str, colour: str) -> str:
     return (
-        f'<span style="background:{colour}22;color:{colour};border:1px solid {colour}44;'
-        f'border-radius:16px;padding:2px 10px;font-size:0.72rem;font-weight:600">{text}</span>'
+        f'<span style="background:{colour}15;color:{colour};border:1px solid {colour}35;'
+        f'border-radius:12px;padding:4px 12px;font-size:0.72rem;font-weight:600;display:inline-block;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)">{text}</span>'
     )
 
 
@@ -132,7 +132,7 @@ def render(filter_source: str = "All", date_from=None, date_to=None):
     # Colour-coded display using st.dataframe column config
     st.dataframe(
         view,
-        use_container_width=True,
+        width="stretch",
         height=min(600, 38 * len(view) + 50),
         column_config={
             "Type": st.column_config.TextColumn("Type", width="small"),
@@ -231,5 +231,5 @@ def render(filter_source: str = "All", date_from=None, date_to=None):
         data=csv_data,
         file_name="zenfinance_export.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )

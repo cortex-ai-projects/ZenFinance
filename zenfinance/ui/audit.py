@@ -197,6 +197,48 @@ def _run_audit(
     df.drop(columns=["date_dt"], inplace=True, errors="ignore")
     return df
 
+import uuid
+def _link_money_trails(df: pd.DataFrame, days_tolerance: int = 2) -> pd.DataFrame:
+    """Matches DEBITs from Bank A to CREDITs in Bank B within ±tolerance days forming a money_trail."""
+    df = df.copy()
+    if "money_trail_id" not in df.columns:
+        df["money_trail_id"] = None
+        
+    df["date_dt"] = pd.to_datetime(df["date"], errors="coerce")
+    bank_only = df[df["bank_name"].isin(BANK_SOURCES)].copy()
+    
+    debits = bank_only[(bank_only["txn_type"] == "DEBIT") & (bank_only["money_trail_id"].isna())].copy()
+    credits = bank_only[(bank_only["txn_type"] == "CREDIT") & (bank_only["money_trail_id"].isna())].copy()
+    
+    td = pd.Timedelta(days=days_tolerance)
+    for d_idx, d_row in debits.iterrows():
+        if pd.isna(d_row["date_dt"]): continue
+        
+        # find matching credit
+        c_mask = (
+            (credits["bank_name"] != d_row["bank_name"]) &
+            (abs(credits["date_dt"] - d_row["date_dt"]) <= td) & 
+            (abs(credits["amount"].astype(float) - float(d_row["amount"])) < 1.0) &
+            (credits["money_trail_id"].isna())
+        )
+        matches = credits[c_mask]
+        if not matches.empty:
+            match_idx = matches.index[0]
+            trail_id = str(uuid.uuid4())[:8]
+            df.loc[d_idx, "money_trail_id"] = trail_id
+            df.loc[d_idx, "system_comment"] = f"🔗 Trail {trail_id} → {df.loc[match_idx, 'bank_name']}"
+            df.loc[match_idx, "money_trail_id"] = trail_id
+            df.loc[match_idx, "system_comment"] = f"🔗 Trail {trail_id} ← {d_row['bank_name']}"
+            df.loc[d_idx, "category"] = "Finance"
+            df.loc[d_idx, "sub_category"] = "Savings/Transfer"
+            df.loc[match_idx, "category"] = "Finance"
+            df.loc[match_idx, "sub_category"] = "Savings/Transfer"
+            
+            credits.loc[match_idx, "money_trail_id"] = trail_id # mark used
+
+    df.drop(columns=["date_dt"], inplace=True, errors="ignore")
+    return df
+
 
 # ── Status badge HTML ──────────────────────────────────────────────────────
 
@@ -209,8 +251,9 @@ def _status_badge(status: str) -> str:
     }
     col, icon = colours.get(status, ("#8888AA", "•"))
     return (
-        f'<span style="background:{col}22;color:{col};border:1px solid {col}55;'
-        f'border-radius:20px;padding:2px 10px;font-size:0.75rem;font-weight:600">'
+        f'<span style="background:{col}15;color:{col};border:1px solid {col}35;'
+        f'border-radius:12px;padding:4px 12px;font-size:0.75rem;font-weight:600;'
+        f'backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)">'
         f'{icon} {status}</span>'
     )
 
@@ -221,9 +264,8 @@ def render():
     # ── Info banner ───────────────────────────────────────────────────────
     st.markdown(
         f"""
-        <div style="background:#1A1D2E;border:1px solid #2A2D3E;border-radius:12px;
-                    padding:14px 18px;margin-bottom:16px;font-size:0.88rem;line-height:1.8">
-          <b style="color:#FAFAFA">How auditing works</b><br>
+        <div class="glass-card" style="margin-bottom:16px;font-size:0.88rem;line-height:1.8">
+          <b style="color:#FFFFFF; font-family:'Outfit',sans-serif; font-size:1.05rem;">How Auditing Works</b><br>
           A bank transaction is marked <b style="color:{GREEN}">Audited</b> only when it is found in:<br>
           &nbsp;&nbsp;• <b style="color:{GREEN}">AXIO</b> — your personal finance ledger (manual ground truth)<br>
           &nbsp;&nbsp;• A <b style="color:{BLUE}">terminal / merchant app</b>: Swiggy · Zomato · Blinkit · Zepto · BigBasket · Amazon …<br>
@@ -256,7 +298,7 @@ def render():
         }.get(_classify_source(x), "📄 Other")
     )
     src_summary.columns = ["Source", "Transactions", "Role"]
-    st.dataframe(src_summary, use_container_width=True, hide_index=True)
+    st.dataframe(src_summary, width="stretch", hide_index=True)
 
     # ── Audit settings ────────────────────────────────────────────────────
     st.markdown("---")
@@ -302,7 +344,7 @@ def render():
     # ── Run audit button ──────────────────────────────────────────────────
     st.markdown("---")
     run_col, _ = st.columns([1, 3])
-    if run_col.button("🚀 Run Audit Now", type="primary", use_container_width=True):
+    if run_col.button("🚀 Run Audit Now", type="primary", width="stretch"):
         if len(bank_df) == 0:
             st.warning(
                 "No bank source transactions found. "
@@ -314,8 +356,9 @@ def render():
                 "Import AXIO, Swiggy, Zomato, Blinkit, or Zepto data to enable auditing."
             )
         else:
-            with st.spinner("Running multi-source audit…"):
+            with st.spinner("Running multi-source audit & tracing Money Trails…"):
                 updated_df = _run_audit(df, date_tol=date_tol, amount_tol=amount_tol)
+                updated_df = _link_money_trails(updated_df, days_tolerance=2)
                 save_all(updated_df, reason="audit_run")
 
             audited  = int((updated_df["audit_status"] == "Audited").sum())
@@ -333,32 +376,46 @@ def render():
     flagged_df = df[df["audit_status"] == "Flagged"]
     if not flagged_df.empty:
         st.markdown(
-            f'<h3>🚩 Flagged Transactions '
+            f'<h3>🚩 Conflicts & Flagged Transactions '
             f'<span style="color:{RED}">({len(flagged_df)})</span></h3>',
             unsafe_allow_html=True,
         )
-        st.caption(
-            "These bank transactions have no matching AXIO entry or terminal-app record. "
-            "Review manually and resolve."
-        )
-        show_cols = ["date", "bank_name", "amount", "txn_type",
-                     "bank_description", "payment_method", "system_comment"]
-        view = flagged_df[[c for c in show_cols if c in flagged_df.columns]].copy()
-        if "date" in view.columns:
-            view["date"] = pd.to_datetime(view["date"]).dt.strftime("%d %b %Y")
-        if "amount" in view.columns:
-            view["amount"] = view["amount"].map(lambda x: f"₹{x:,.2f}")
-        view.columns = [c.replace("_", " ").title() for c in view.columns]
-        st.dataframe(view, use_container_width=True, hide_index=True,
-                     height=min(400, 38 * len(view) + 50))
+        st.caption("Transactions lacking a matching origin. Resolve them by importing missing sources or overriding manually.")
+        
+        tab_term, tab_axio, tab_raw = st.tabs(["🛒 Missing Terminal Origins", "🧾 Missing AXIO Match", "⚠️ Raw Conflicts"])
+        
+        def _render_flag_tab(flg_df):
+            if flg_df.empty:
+                st.success("Clean! No conflicts here.")
+                return
+            show_cols = ["date", "bank_name", "amount", "txn_type", "bank_description", "payment_method", "system_comment"]
+            view = flg_df[[c for c in show_cols if c in flg_df.columns]].copy()
+            if "date" in view.columns: view["date"] = pd.to_datetime(view["date"]).dt.strftime("%d %b")
+            if "amount" in view.columns: view["amount"] = view["amount"].map(lambda x: f"₹{x:,.0f}")
+            view.columns = [c.replace("_", " ").title() for c in view.columns]
+            st.dataframe(view, width="stretch", hide_index=True)
+            
+        with tab_term:
+            # Suspect it's a missing terminal app because it was routed via UPI/Cards
+            is_upi = flagged_df["bank_description"].str.contains("UPI|Zomato|Swiggy|Blinkit|Amazon", case=False, na=False)
+            _render_flag_tab(flagged_df[is_upi])
+            
+        with tab_axio:
+            # Standard debits missing AXIO entries
+            _render_flag_tab(flagged_df[~is_upi & (flagged_df["txn_type"] == "DEBIT")])
+            
+        with tab_raw:
+            # Everything else (Credits mostly)
+            _render_flag_tab(flagged_df[~is_upi & (flagged_df["txn_type"] == "CREDIT")])
 
-        if st.button("✅ Mark All Flagged as Manually Reviewed"):
+        if st.button("✅ Mark All Flagged as Manually Reviewed", type="secondary"):
             master = load_all()
             flagged_idx = master["audit_status"] == "Flagged"
             master.loc[flagged_idx, "audit_status"]   = "Audited"
             master.loc[flagged_idx, "system_comment"] = "✏️ Manually reviewed & approved"
             save_all(master, reason="resolve_flagged")
             st.success("All flagged transactions marked as reviewed.")
+            st.rerun()
     else:
         st.success("🎉 No flagged transactions — everything is reconciled!")
 
@@ -366,9 +423,11 @@ def render():
     st.markdown("---")
     audited_df = df[df["audit_status"] == "Audited"]
     if not audited_df.empty:
-        with st.expander(
-            f"✅ Audited Transactions ({len(audited_df)})", expanded=False
-        ):
+        st.markdown(f"### ✅ Audited Transactions ({len(audited_df)})")
+        
+        tab_data, tab_flow = st.tabs(["📋 Data View", "🌊 Flow Graph"])
+        
+        with tab_data:
             show_cols = ["date", "bank_name", "amount", "txn_type",
                          "bank_description", "payment_method", "system_comment"]
             view = audited_df[[c for c in show_cols if c in audited_df.columns]].copy()
@@ -377,8 +436,88 @@ def render():
             if "amount" in view.columns:
                 view["amount"] = view["amount"].map(lambda x: f"₹{x:,.2f}")
             view.columns = [c.replace("_", " ").title() for c in view.columns]
-            st.dataframe(view, use_container_width=True, hide_index=True,
+            st.dataframe(view, width="stretch", hide_index=True,
                          height=min(400, 38 * len(view) + 50))
+                         
+        with tab_flow:
+            st.caption("Visualizing the cross-app match flow: Source Bank → Payment Method → Auditing Tool Origin")
+            flows = []
+            for _, r in audited_df.iterrows():
+                bank = str(r.get("bank_name", "Unknown Bank"))
+                pm = str(r.get("payment_method", ""))
+                comment = str(r.get("system_comment", ""))
+                
+                # Extract payment method / intermediator
+                if "Routed via " in comment:
+                    route_part = comment.split("Routed via ")[1].split(" — ")[0]
+                    pm_node = route_part.strip()
+                elif pm.strip() not in ["", "nan", "None"]:
+                    pm_node = pm.strip()
+                else:
+                    pm_node = "Direct / Card"
+                    
+                # Extract Match Origin
+                if "Matched in " in comment:
+                    origin_part = comment.split("Matched in ")[1].split(" — ")[0]
+                    origin_node = origin_part.strip()
+                else:
+                    origin_node = "Manual Review"
+                    
+                # Append links
+                flows.append({"source": f"Bank: {bank}", "target": f"Method: {pm_node}", "value": 1})
+                flows.append({"source": f"Method: {pm_node}", "target": f"Match: {origin_node}", "value": 1})
+
+            import plotly.graph_objects as go
+            flow_df = pd.DataFrame(flows).groupby(["source", "target"]).sum().reset_index()
+            
+            if not flow_df.empty:
+                all_nodes = list(set(flow_df["source"]).union(set(flow_df["target"])))
+                node_indices = {n: i for i, n in enumerate(all_nodes)}
+                
+                source_indices = [node_indices[src] for src in flow_df["source"]]
+                target_indices = [node_indices[tgt] for tgt in flow_df["target"]]
+                
+                fig_sankey = go.Figure(data=[go.Sankey(
+                    node = dict(
+                      pad = 25,
+                      thickness = 25,
+                      line = dict(color = "#1A1D2E", width = 1.5),
+                      label = [n.split(": ", 1)[-1] for n in all_nodes],
+                      color = ["#6C63FF" if n.startswith("Bank:") else "#4CC9F0" if n.startswith("Method:") else "#43D9AD" for n in all_nodes]
+                    ),
+                    link = dict(
+                      source = source_indices,
+                      target = target_indices,
+                      value = flow_df["value"],
+                      color = "rgba(108, 99, 255, 0.25)"
+                    )
+                )])
+                fig_sankey.update_layout(
+                    font_size=12, 
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#8E92B2", family="'Inter', sans-serif"),
+                    margin=dict(t=20, b=20, l=10, r=10),
+                    height=450
+                )
+                st.plotly_chart(fig_sankey, use_container_width=True)
+            else:
+                st.info("Not enough data elements resolved to generate flow visualization.")
+
+    # ── Money Trails ──────────────────────────────────────────────────────
+    if "money_trail_id" in df.columns:
+        trails_df = df[df["money_trail_id"].notna()]
+        if not trails_df.empty:
+            st.markdown("---")
+            with st.expander(f"🔗 Detected Money Trails ({trails_df['money_trail_id'].nunique()} paths)"):
+                st.caption("Temporal matching engine detected the following logical fund transfers across your bank accounts.")
+                trail_view = trails_df[["date", "money_trail_id", "bank_name", "txn_type", "amount", "system_comment"]].copy()
+                trail_view.sort_values(by=["money_trail_id", "date"], inplace=True)
+                if "date" in trail_view.columns:
+                    trail_view["date"] = pd.to_datetime(trail_view["date"]).dt.strftime("%d %b %Y")
+                
+                # Apply custom styler to highlight the trail flows
+                st.dataframe(trail_view, width="stretch", hide_index=True)
 
     # ── Intermediator-only records ────────────────────────────────────────
     inter_pending = df[
@@ -402,7 +541,7 @@ def render():
             if "amount" in view.columns:
                 view["amount"] = view["amount"].map(lambda x: f"₹{x:,.2f}")
             view.columns = [c.replace("_", " ").title() for c in view.columns]
-            st.dataframe(view, use_container_width=True, hide_index=True)
+            st.dataframe(view, width="stretch", hide_index=True)
 
     # ── AXIO ↔ Terminal app coverage summary ──────────────────────────────
     if not audit_src.empty or not term_src.empty:
@@ -417,7 +556,7 @@ def render():
                     axio_view["date"] = pd.to_datetime(axio_view["date"]).dt.strftime("%d %b %Y")
                     axio_view["amount"] = axio_view["amount"].map(lambda x: f"₹{x:,.2f}")
                     axio_view.columns = ["Date", "Amount", "Description"]
-                    st.dataframe(axio_view, use_container_width=True, hide_index=True, height=250)
+                    st.dataframe(axio_view, width="stretch", hide_index=True, height=250)
 
             with col_b:
                 st.markdown(f"**🏪 Terminal App Records** ({len(term_src)})")
@@ -426,4 +565,4 @@ def render():
                     term_view["date"] = pd.to_datetime(term_view["date"]).dt.strftime("%d %b %Y")
                     term_view["amount"] = term_view["amount"].map(lambda x: f"₹{x:,.2f}")
                     term_view.columns = ["Date", "App", "Amount", "Description"]
-                    st.dataframe(term_view, use_container_width=True, hide_index=True, height=250)
+                    st.dataframe(term_view, width="stretch", hide_index=True, height=250)

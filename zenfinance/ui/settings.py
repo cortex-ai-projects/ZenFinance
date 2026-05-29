@@ -10,18 +10,18 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
+from zenfinance import gdrive
 from zenfinance.categorization import CATEGORY_RULES, get_all_categories
 from zenfinance.data_store import (
     get_backup_list,
     load_all,
     restore_backup,
     save_all,
-    DB_PATH,
-    BACKUP_DIR,
 )
 from zenfinance.parsers.registry import (
     BANK_SOURCES,
@@ -49,13 +49,14 @@ def render():
         '<b style="color:#6C63FF">🏷️ Categories</b> &nbsp;·&nbsp; '
         '<b style="color:#6C63FF">🔍 Audit Sources</b> &nbsp;·&nbsp; '
         '<b style="color:#6C63FF">🗄️ Data</b> &nbsp;·&nbsp; '
+        '<b style="color:#6C63FF">🔒 Security & Cloud</b> &nbsp;·&nbsp; '
         '<b style="color:#6C63FF">ℹ️ About</b>'
         '</div>',
         unsafe_allow_html=True,
     )
 
-    tab_backup, tab_cats, tab_audit_cfg, tab_data, tab_about = st.tabs(
-        ["💾 Backups", "🏷️ Categories", "🔍 Audit Sources", "🗄️ Data Management", "ℹ️ About"]
+    tab_backup, tab_cats, tab_audit_cfg, tab_data, tab_security, tab_about = st.tabs(
+        ["💾 Backups", "🏷️ Categories", "🔍 Audit Sources", "🗄️ Data Management", "🔒 Security & Cloud", "ℹ️ About"]
     )
 
     # ══════════════════════════════════════════════════════════════════
@@ -64,8 +65,8 @@ def render():
     with tab_backup:
         st.markdown("### Automatic Backup History")
         st.caption(
-            f"Every import and edit triggers an automatic timestamped backup. "
-            f"Backups are stored in `{BACKUP_DIR}`."
+            "Every import and edit triggers an automatic timestamped backup. "
+            "Backups are stored securely in your Google Drive `backups/` subfolder."
         )
 
         backups = get_backup_list()
@@ -82,19 +83,24 @@ def render():
                 if restore_backup(selected_backup):
                     st.success(f"✅ Restored from `{selected_backup}`. Refresh the page to see updated data.")
                 else:
-                    st.error("Restore failed — file not found.")
+                    st.error("Restore failed — file not found in Google Drive.")
 
-            # Download
-            backup_path = BACKUP_DIR / selected_backup
-            if backup_path.exists():
-                bdf = pd.read_csv(backup_path)
-                b2.download_button(
-                    "⬇️ Download Backup",
-                    data=bdf.to_csv(index=False).encode(),
-                    file_name=selected_backup,
-                    mime="text/csv",
-                    use_container_width=True,
-                )
+            # Download from Google Drive
+            try:
+                backup_folder = gdrive.get_backups_folder_id()
+                backup_id = gdrive.find_file(selected_backup, backup_folder)
+                if backup_id:
+                    backup_bytes = gdrive.download_file_content(backup_id)
+                    b2.download_button(
+                        "⬇️ Download Backup",
+                        data=backup_bytes,
+                        file_name=selected_backup,
+                        mime="text/csv",
+                    )
+                else:
+                    b2.error("Backup file not found in Google Drive.")
+            except Exception as e:
+                b2.error(f"Error fetching backup: {e}")
 
             with st.expander("📋 All backup files"):
                 for b in backups:
@@ -118,22 +124,114 @@ def render():
                 "Patterns":     ", ".join(patterns[:4]) + ("…" if len(patterns) > 4 else ""),
             })
         rules_df = pd.DataFrame(rules_rows)
-        st.dataframe(rules_df, use_container_width=True, hide_index=True, height=450)
+        st.dataframe(rules_df, width="stretch", hide_index=True, height=450)
 
         st.markdown("---")
-        st.markdown("#### Re-apply Auto-Categorisation")
-        st.caption("Re-runs category detection on all **Uncategorized** transactions.")
-        if st.button("🔁 Re-categorise Uncategorised Transactions"):
-            from zenfinance.categorization import apply_categories
+        st.markdown("#### 🔁 Re-Categorisation Runner & Previewer")
+        st.caption(
+            "Detect proposed changes to categories based on current rules. "
+            "You can review a preview of affected transactions before committing them to the database."
+        )
+
+        only_uncategorized = st.checkbox(
+            "Only re-categorise Uncategorised transactions (keep manually edited/categorised rows)",
+            value=False,
+            key="only_uncategorized_chk"
+        )
+
+        if "cat_preview_df" not in st.session_state:
+            st.session_state.cat_preview_df = None
+        if "cat_preview_changes" not in st.session_state:
+            st.session_state.cat_preview_changes = None
+
+        col_run, col_clear = st.columns([2, 1])
+
+        if col_run.button("🔍 Run Dry-Run Analysis & Preview", type="primary", key="btn_dry_run"):
+            from zenfinance.categorization import categorize
             df = load_all()
             if df.empty:
                 st.warning("No transactions in database.")
             else:
-                before = int((df["category"].isna() | (df["category"] == "Uncategorized")).sum())
-                df = apply_categories(df)
-                save_all(df, reason="recategorize")
-                after = int((df["category"].isna() | (df["category"] == "Uncategorized")).sum())
-                st.success(f"✅ Done! Fixed {before - after} previously uncategorised transaction(s).")
+                changes = []
+                for idx, row in df.iterrows():
+                    curr_cat = str(row.get("category", "")).strip()
+                    curr_sub = str(row.get("sub_category", "")).strip()
+                    if curr_cat in ["nan", "None"]:
+                        curr_cat = ""
+                    if curr_sub in ["nan", "None"]:
+                        curr_sub = ""
+
+                    # If only_uncategorized is True, only process Uncategorized/empty rows
+                    if only_uncategorized and curr_cat not in ["Uncategorized", "General", ""]:
+                        continue
+
+                    new_cat, new_sub = categorize(str(row.get("bank_description", "")), str(row.get("details", "")))
+                    if curr_cat != new_cat or curr_sub != new_sub:
+                        changes.append({
+                            "id": row["id"],
+                            "date": row["date"],
+                            "bank_name": row["bank_name"],
+                            "bank_description": row["bank_description"],
+                            "amount": row["amount"],
+                            "Current Category": curr_cat if curr_cat else "Uncategorized",
+                            "Current Sub-Category": curr_sub if curr_sub else "General",
+                            "Proposed Category": new_cat,
+                            "Proposed Sub-Category": new_sub
+                        })
+                
+                if changes:
+                    st.session_state.cat_preview_changes = changes
+                    # Format a preview dataframe for user display
+                    preview_rows = []
+                    for c in changes:
+                        preview_rows.append({
+                            "Date": pd.to_datetime(c["date"]).strftime("%d %b %Y") if pd.notna(c["date"]) else "—",
+                            "Bank": c["bank_name"],
+                            "Description": str(c["bank_description"])[:60],
+                            "Amount": f"₹{c['amount']:,.2f}",
+                            "Current": f"{c['Current Category']} ({c['Current Sub-Category']})",
+                            "Proposed": f"{c['Proposed Category']} ({c['Proposed Sub-Category']})"
+                        })
+                    st.session_state.cat_preview_df = pd.DataFrame(preview_rows)
+                else:
+                    st.session_state.cat_preview_changes = []
+                    st.session_state.cat_preview_df = pd.DataFrame()
+
+        if col_clear.button("✕ Clear Preview", key="btn_clear_preview"):
+            st.session_state.cat_preview_changes = None
+            st.session_state.cat_preview_df = None
+
+        # Display preview if available
+        if st.session_state.cat_preview_df is not None:
+            if st.session_state.cat_preview_df.empty:
+                st.info("🎉 No categorization changes detected. All transactions are already up to date!")
+            else:
+                st.markdown(f"**Proposed Changes ({len(st.session_state.cat_preview_df)} transactions affected):**")
+                st.dataframe(
+                    st.session_state.cat_preview_df,
+                    width="stretch",
+                    height=min(400, 38 * len(st.session_state.cat_preview_df) + 38),
+                    hide_index=True
+                )
+                
+                if st.button("💾 Confirm & Apply Proposed Changes", type="primary", key="btn_apply_cat_changes"):
+                    master = load_all()
+                    updated = 0
+                    for c in st.session_state.cat_preview_changes:
+                        mask = master["id"] == c["id"]
+                        if mask.any():
+                            master.loc[mask, "category"] = c["Proposed Category"]
+                            master.loc[mask, "sub_category"] = c["Proposed Sub-Category"]
+                            updated += 1
+                    
+                    if updated > 0:
+                        save_all(master, reason="runner_recategorize")
+                        st.success(f"✅ Successfully updated {updated} transaction(s) in the database!")
+                        # Clear preview
+                        st.session_state.cat_preview_changes = None
+                        st.session_state.cat_preview_df = None
+                    else:
+                        st.error("No matches found to update.")
 
     # ══════════════════════════════════════════════════════════════════
     # TAB 3 — Audit Sources
@@ -224,13 +322,13 @@ def render():
                 .reset_index()
                 .rename(columns={"bank_name": "Source"})
             )
-            st.dataframe(src, use_container_width=True, hide_index=True)
+            st.dataframe(src, width="stretch", hide_index=True)
 
             # Audit status summary
             st.markdown("**Audit status breakdown:**")
             audit_summary = df["audit_status"].value_counts().reset_index()
             audit_summary.columns = ["Status", "Count"]
-            st.dataframe(audit_summary, use_container_width=True, hide_index=True)
+            st.dataframe(audit_summary, width="stretch", hide_index=True)
 
         st.markdown("---")
         st.markdown("#### 🗑️ Danger Zone")
@@ -259,7 +357,7 @@ def render():
             try:
                 raw_df = pd.read_csv(raw_csv)
                 st.write(f"Found **{len(raw_df)}** rows. Preview:")
-                st.dataframe(raw_df.head(5), use_container_width=True)
+                st.dataframe(raw_df.head(5), width="stretch")
                 if st.button("Merge into Database", key="btn_merge_csv"):
                     existing = load_all()
                     merged = pd.concat([existing, raw_df], ignore_index=True)
@@ -273,9 +371,96 @@ def render():
                 st.error(f"Error reading CSV: {e}")
 
     # ══════════════════════════════════════════════════════════════════
-    # TAB 5 — About
+    # TAB 5 — Security & Cloud
+    # ══════════════════════════════════════════════════════════════════
+    with tab_security:
+        st.markdown("### 🔒 Security & Cloud Settings")
+        st.caption("Manage authentication settings and sync/export data with Google Drive.")
+        
+        # 1. Auth Section
+        st.markdown("#### 🔑 Authentication")
+        col_out, _ = st.columns([1.5, 3])
+        if col_out.button("🚪 Log Out of ZenFinance", type="secondary", key="btn_logout"):
+            try:
+                if "cookie_manager" in st.session_state and st.session_state["cookie_manager"]:
+                    st.session_state["cookie_manager"].delete("auth_pin")
+                st.session_state["authenticated"] = False
+                st.success("Logged out! Refreshing...")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error logging out: {e}")
+                
+        st.markdown("---")
+        
+        # 2. Google Drive Section
+        st.markdown("#### ☁️ Google Drive Connection")
+        st.info(
+            f"**Drive Folder ID:** `{gdrive.FOLDER_ID}`\n\n"
+            f"**Service Account:** `gdrive@zenfinance369.iam.gserviceaccount.com` "
+            f"(Ensure Editor access is granted to this email for the folder)."
+        )
+        
+        if st.button("🔌 Test Google Drive Connection", key="btn_test_gdrive"):
+            service = gdrive.get_drive_service()
+            if service:
+                try:
+                    # Try listing files in the directory
+                    query = f"'{gdrive.FOLDER_ID}' in parents and trashed = false"
+                    results = service.files().list(q=query, pageSize=1, fields="files(id, name)").execute()
+                    st.success("✅ Connected successfully to Google Drive folder!")
+                except Exception as e:
+                    st.error(f"❌ Connection failed: {e}")
+            else:
+                st.error("❌ Authentication failed. Please check credentials.")
+                
+        st.markdown("---")
+        
+        # 3. ZIP Import/Export Section
+        st.markdown("#### 📦 ZIP Import / Export")
+        st.caption(
+            "Download a complete archive of your transactions and backups, "
+            "or restore them in bulk by uploading a structured ZIP file."
+        )
+        
+        z1, z2 = st.columns(2)
+        
+        with z1:
+            st.markdown("**Export Data**")
+            st.caption("Downloads transactions.csv and all backups from Google Drive as a single ZIP archive.")
+            if st.button("📦 Prepare Export ZIP", key="btn_prep_zip"):
+                with st.spinner("Generating ZIP from Google Drive..."):
+                    try:
+                        zip_bytes = gdrive.generate_data_zip()
+                        st.download_button(
+                            "⬇️ Download Data ZIP",
+                            data=zip_bytes,
+                            file_name=f"zenfinance_backup_{datetime.now().strftime('%Y%m%d')}.zip",
+                            mime="application/zip",
+                            key="btn_download_zip_act"
+                        )
+                        st.success("ZIP prepared successfully! Click above to download.")
+                    except Exception as e:
+                        st.error(f"Failed to generate ZIP: {e}")
+                        
+        with z2:
+            st.markdown("**Import / Restore ZIP**")
+            st.caption("Upload a structured ZIP (containing transactions.csv) to overwrite cloud data.")
+            uploaded_zip = st.file_uploader("Upload ZIP Backup", type=["zip"], key="zip_backup_uploader")
+            if uploaded_zip:
+                if st.button("⚠️ Restore Entire Database from ZIP", type="secondary", key="btn_restore_zip"):
+                    with st.spinner("Restoring data in Google Drive..."):
+                        if gdrive.restore_data_from_zip(uploaded_zip.read()):
+                            from zenfinance.data_store import clear_cache
+                            clear_cache()
+                            st.success("✅ Database restored successfully! Refresh the page to see changes.")
+                        else:
+                            st.error("Restore failed. Verify the ZIP file format.")
+
+    # ══════════════════════════════════════════════════════════════════
+    # TAB 6 — About
     # ══════════════════════════════════════════════════════════════════
     with tab_about:
+
         st.markdown("""
 ### ZenFinance — Personal Finance Auditing Tool
 

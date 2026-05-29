@@ -15,6 +15,9 @@ import pandas as pd
 # Patterns are tested (case-insensitive) against bank_description + details
 # ──────────────────────────────────────────────────────────
 CATEGORY_RULES: list[tuple[str, str, list[str]]] = [
+    # Insurance (custom category)
+    ("Insurance", "General", [r"sbilife", r"sbi\s*life"]),
+
     # Food & Dining
     ("Food & Dining", "Restaurants",   [r"swiggy", r"zomato", r"dominos?", r"pizza", r"burger", r"kfc", r"mcdonalds?", r"subway", r"barbeque\s*nation", r"haldirams?"]),
     ("Food & Dining", "Groceries",     [r"bigbasket", r"grofers", r"blinkit", r"zepto", r"dmart", r"more\s*supermarket", r"reliance\s*(fresh|smart)", r"grocery"]),

@@ -23,7 +23,7 @@ SOURCE_CARDS = [
     ("AXIO",            "AXIO",             "🔍",  "#43D9AD", [".csv", ".xlsx"],           "Your personal ledger — marks transactions Audited",       "audit"),
 
     # ── Banks ──────────────────────────────────────────────────────────
-    ("SBI Bank",        "SBI Bank",         "🏦",  "#4CC9F0", [".xlsx", ".xls", ".pdf"],   "State Bank of India — Excel or PDF statement",            "bank"),
+    ("SBI Bank",        "SBI Bank",         "🏦",  "#4CC9F0", [".xlsx", ".xls", ".csv", ".pdf"], "State Bank of India — Excel, CSV or PDF statement",   "bank"),
     ("ICICI Bank",      "ICICI Bank",       "🏦",  "#56CCF2", [".xlsx", ".xls", ".pdf"],   "ICICI Bank — Excel (XLS/XLSX) or PDF statement",          "bank"),
     ("HDFC Bank",       "HDFC Bank",        "🏦",  "#6C63FF", [".xlsx", ".csv"],            "HDFC Bank Excel / CSV export",                            "bank"),
     ("Axis Bank",       "Axis Bank",        "🏦",  "#BB86FC", [".xlsx", ".csv"],            "Axis Bank Excel / CSV export",                            "bank"),
@@ -111,26 +111,31 @@ def _source_grid() -> str | None:
                 desc = card[5] if len(card) > 5 else name
 
                 is_selected = st.session_state.selected_source == key
-                border = f"2px solid {card_colour}" if is_selected else "1px solid #2A2D3E"
-                bg     = f"{card_colour}22"          if is_selected else "#1A1D2E"
-                shadow = f"0 0 12px {card_colour}55" if is_selected else "none"
+                border_color = card_colour if is_selected else "rgba(255,255,255,0.06)"
+                border_top_color = card_colour if is_selected else "rgba(255,255,255,0.12)"
+                bg = f"{card_colour}1A" if is_selected else "rgba(22,25,41,0.3)"
+                shadow = f"0 8px 32px 0 {card_colour}25" if is_selected else "0 8px 32px 0 rgba(0, 0, 0, 0.15)"
+                border_width = "2px" if is_selected else "1px"
 
                 col.markdown(
                     f"""
                     <div style="
-                        background:{bg};
-                        border:{border};
-                        border-radius:14px;
-                        padding:14px 10px 12px;
-                        text-align:center;
-                        box-shadow:{shadow};
-                        margin-bottom:6px;
-                        cursor:pointer;
-                        transition:all .2s;
+                        background: {bg};
+                        border: {border_width} solid {border_color};
+                        border-top: {border_width} solid {border_top_color};
+                        border-radius: 16px;
+                        padding: 18px 12px 14px;
+                        text-align: center;
+                        box-shadow: {shadow};
+                        margin-bottom: 6px;
+                        cursor: pointer;
+                        backdrop-filter: blur(12px);
+                        -webkit-backdrop-filter: blur(12px);
+                        transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
                     ">
-                      <div style="font-size:1.7rem">{emoji}</div>
-                      <div style="font-weight:700;font-size:0.82rem;color:#FAFAFA;margin-top:4px">{name}</div>
-                      <div style="font-size:0.62rem;color:#8888AA;margin-top:2px">{', '.join(fmts)}</div>
+                      <div style="font-size:1.8rem">{emoji}</div>
+                      <div style="font-weight:700;font-size:0.85rem;color:#FFFFFF;margin-top:6px">{name}</div>
+                      <div style="font-size:0.65rem;color:#8E92B2;margin-top:4px">{', '.join(fmts)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -142,7 +147,7 @@ def _source_grid() -> str | None:
                     f"Select {name}",
                     key=f"src_btn_{key}",
                     help=desc,
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     st.session_state.selected_source = key
                     # No st.rerun() — Streamlit reruns automatically on button click
@@ -211,16 +216,16 @@ def render():
         # Show format hint card
         st.markdown(
             f"""
-            <div style="background:#1A1D2E;border:1px dashed #2A2D3E;border-radius:12px;
-                        padding:20px;text-align:center;color:#8888AA">
-              <div style="font-size:1.8rem">{emoji}</div>
-              <div style="margin-top:8px;font-size:0.9rem">
-                Drag & drop your <b style="color:{colour}">{name}</b> statement here
+            <div class="glass-card" style="border:1px dashed rgba(255,255,255,0.15) !important;
+                        padding:24px;text-align:center;color:#8E92B2;margin-bottom:15px">
+              <div style="font-size:2rem">{emoji}</div>
+              <div style="margin-top:10px;font-size:0.95rem;font-weight:600;color:#FFFFFF">
+                Drag & drop your <span style="color:{colour}">{name}</span> statement here
               </div>
-              <div style="font-size:0.75rem;margin-top:4px">
+              <div style="font-size:0.78rem;margin-top:6px;color:#8E92B2">
                 Accepted formats: <b>{', '.join(fmts)}</b>
               </div>
-              <div style="font-size:0.72rem;margin-top:8px;color:#555">{desc}</div>
+              <div style="font-size:0.74rem;margin-top:10px;color:#5E627F">{desc}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -296,12 +301,12 @@ def render():
                         coloraxis_showscale=False,
                         height=220,
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
         # Preview table
         with st.expander("🔍 Preview all rows", expanded=True):
             preview_df = _preview_table(raw_dtos)
-            st.dataframe(preview_df, use_container_width=True,
+            st.dataframe(preview_df, width="stretch",
                          height=min(420, 38 * len(preview_df) + 38),
                          hide_index=True)
 
@@ -326,7 +331,7 @@ def render():
 
     col_btn, _ = st.columns([1, 3])
     with col_btn:
-        if st.button("⚡ Import Now", type="primary", use_container_width=True):
+        if st.button("⚡ Import Now", type="primary", width="stretch"):
             with st.spinner("Merging and deduplicating…"):
                 result = append_transactions(all_dtos)
 
