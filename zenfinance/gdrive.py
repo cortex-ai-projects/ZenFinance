@@ -19,14 +19,17 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # Config
-FOLDER_ID = st.secrets.get("gdrive_folder_id", "17DC3eOMWSWshibk5SbXq33tsnSY7c9HL")
+try:
+    FOLDER_ID = st.secrets.get("gdrive_folder_id", "17DC3eOMWSWshibk5SbXq33tsnSY7c9HL")
+except Exception:
+    FOLDER_ID = "17DC3eOMWSWshibk5SbXq33tsnSY7c9HL"
 
 @st.cache_resource
 def get_drive_service():
     """Authenticate and return Google Drive API service client."""
     # 1. Try streamlit secrets (for cloud deployment)
-    if "gcp_service_account" in st.secrets:
-        try:
+    try:
+        if "gcp_service_account" in st.secrets:
             creds_info = dict(st.secrets["gcp_service_account"])
             # Format private key properly since secrets might convert newlines
             if "private_key" in creds_info:
@@ -36,7 +39,9 @@ def get_drive_service():
                 scopes=["https://www.googleapis.com/auth/drive"]
             )
             return build("drive", "v3", credentials=creds)
-        except Exception as e:
+    except Exception as e:
+        # Ignore secrets-not-found errors; report formatting errors if gcp_service_account was present
+        if "gcp_service_account" in globals() or "gcp_service_account" in locals():
             st.error(f"Error loading service account from secrets: {e}")
 
     # 2. Try local credentials file (for development)
