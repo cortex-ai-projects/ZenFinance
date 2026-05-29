@@ -4,6 +4,21 @@ Run: streamlit run app.py
 """
 from __future__ import annotations
 
+# ── SSL Monkey Patch for Python 3.14/OpenSSL unexpected EOF ────────────────
+import ssl
+try:
+    orig_create_default_context = ssl.create_default_context
+    def patched_create_default_context(*args, **kwargs):
+        ctx = orig_create_default_context(*args, **kwargs)
+        try:
+            ctx.options |= ssl.OP_IGNORE_UNEXPECTED_EOF
+        except AttributeError:
+            pass
+        return ctx
+    ssl.create_default_context = patched_create_default_context
+except Exception:
+    pass
+
 from datetime import date, timedelta
 import time
 
@@ -275,10 +290,8 @@ hr {
 """, unsafe_allow_html=True)
 
 # ── Auto-refresh every 5 minutes (300 000 ms) ──────────────────────────────
-components.html(
-    '<script>'
-    'setTimeout(function(){ window.location.reload(); }, 300000);'
-    '</script>',
+st.iframe(
+    src="data:text/html;charset=utf-8,%3Cscript%3EsetTimeout(function()%7B%20window.parent.location.reload()%3B%20%7D%2C%20300000)%3B%3C/script%3E",
     height=0,
 )
 
